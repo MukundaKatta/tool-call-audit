@@ -215,12 +215,33 @@ class AuditLog:
         """``True`` when no entries have been recorded."""
         return len(self._state.entries) == 0
 
+    def head(self) -> str:
+        """Return the current chain-tip hash.
+
+        This is the ``entry_hash`` of the most recently recorded entry, or the
+        genesis sentinel (``0`` * 64) for an empty log.
+
+        A plain hash chain cannot, on its own, detect tampering with its final
+        entry: an attacker who edits the last entry can simply recompute its
+        ``entry_hash`` and :meth:`verify` will still pass, because no successor
+        pins it via ``prev_hash``.  To close that gap, persist the value
+        returned here out-of-band and pass it to :meth:`verify` (or
+        :meth:`is_valid`) as ``expected_head`` on reload.
+        """
+        return self._state.last_hash
+
     # ------------------------------------------------------------------
     # Verification
     # ------------------------------------------------------------------
 
-    def verify(self) -> None:
+    def verify(self, *, expected_head: str | None = None) -> None:
         """Walk the hash chain and raise :class:`TamperError` if any entry is invalid.
+
+        Args:
+            expected_head: Optional chain-tip hash captured earlier via
+                :meth:`head`.  When given, the recomputed tip must match it;
+                this is what detects tampering with the *final* entry, which a
+                bare chain walk cannot catch on its own.
 
         Raises:
             :class:`TamperError`: on the first inconsistency found.
@@ -239,10 +260,16 @@ class AuditLog:
                 )
             prev_hash = entry.entry_hash
 
-    def is_valid(self) -> bool:
+        if expected_head is not None and prev_hash != expected_head:
+            raise TamperError(
+                f"Chain head mismatch (expected {expected_head!r}, got {prev_hash!r});"
+                f" the final entry may have been tampered with"
+            )
+
+    def is_valid(self, *, expected_head: str | None = None) -> bool:
         """Return ``True`` when :meth:`verify` passes, ``False`` otherwise."""
         try:
-            self.verify()
+            self.verify(expected_head=expected_head)
             return True
         except TamperError:
             return False

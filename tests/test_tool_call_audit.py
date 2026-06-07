@@ -258,6 +258,72 @@ def test_is_valid_false_on_tamper():
 
 
 # ---------------------------------------------------------------------------
+# AuditLog — head / expected_head (tail-tamper detection)
+# ---------------------------------------------------------------------------
+
+
+def test_head_empty_is_genesis():
+    log = AuditLog()
+    assert log.head() == "0" * 64
+
+
+def test_head_matches_last_entry_hash():
+    log = AuditLog()
+    log.record("a")
+    e = log.record("b")
+    assert log.head() == e.entry_hash
+
+
+def test_verify_with_correct_expected_head_passes():
+    log = AuditLog()
+    log.record("a", {"x": 1})
+    log.record("b", {"y": 2})
+    log.verify(expected_head=log.head())  # no exception
+
+
+def test_verify_with_wrong_expected_head_fails():
+    log = AuditLog()
+    log.record("a")
+    with pytest.raises(TamperError):
+        log.verify(expected_head="f" * 64)
+
+
+def test_expected_head_detects_tail_tamper():
+    """Recomputing the last entry's hash defeats a bare chain walk, but an
+    anchored head catches it."""
+    from tool_call_audit.core import _compute_hash
+
+    log = AuditLog()
+    log.record("a", {"x": 1})
+    log.record("b", {"y": 2})
+    anchored_head = log.head()
+
+    # Attacker mutates the final entry AND recomputes a self-consistent hash.
+    e = log._state.entries[-1]
+    e.args["y"] = 999
+    e.entry_hash = _compute_hash(
+        e.entry_id, e.tool_name, e.args, e.result, e.timestamp, e.prev_hash
+    )
+
+    # A plain walk no longer catches it...
+    assert log.is_valid()
+    # ...but anchoring against the saved head does.
+    assert not log.is_valid(expected_head=anchored_head)
+    with pytest.raises(TamperError):
+        log.verify(expected_head=anchored_head)
+
+
+def test_head_survives_jsonl_roundtrip():
+    log = AuditLog()
+    log.record("a", {"x": 1})
+    log.record("b", {"y": 2})
+    head = log.head()
+    log2 = AuditLog.from_jsonl(log.to_jsonl())
+    assert log2.head() == head
+    log2.verify(expected_head=head)
+
+
+# ---------------------------------------------------------------------------
 # AuditLog — is_hash_valid
 # ---------------------------------------------------------------------------
 

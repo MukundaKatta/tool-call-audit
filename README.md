@@ -36,6 +36,20 @@ Each entry stores:
 
 `verify()` recomputes every hash and confirms the chain is unbroken.  Mutating any field — args, result, timestamp, tool name — will break the chain and cause `verify()` to raise.
 
+### Anchoring the chain head
+
+A bare hash chain cannot detect tampering with its *final* entry: an attacker
+who edits the last entry can recompute its `entry_hash`, and `verify()` will
+still pass because no later entry pins it. To close that gap, save the chain
+tip and check it on reload:
+
+```python
+head = log.head()            # persist this out-of-band (e.g. a trusted store)
+
+log2 = AuditLog.from_jsonl(jsonl)
+log2.verify(expected_head=head)   # raises if the tail was altered
+```
+
 ## API
 
 ### `AuditLog`
@@ -45,8 +59,9 @@ Each entry stores:
 | `record(tool_name, args, *, result)` | Append an entry; returns `AuditEntry` |
 | `entries()` | All entries in recording order |
 | `get(entry_id)` | Look up an entry by ID (1-based), or `None` |
-| `verify()` | Raise `TamperError` if any hash fails |
-| `is_valid()` | Return `True` when `verify()` passes |
+| `head()` | Current chain-tip hash (genesis sentinel when empty) |
+| `verify(*, expected_head=None)` | Raise `TamperError` if any hash fails or the tip doesn't match `expected_head` |
+| `is_valid(*, expected_head=None)` | Return `True` when `verify()` passes |
 | `to_jsonl()` | Serialise to JSONL |
 | `from_jsonl(text)` | Reconstruct from JSONL |
 | `to_list()` | All entries as list of dicts |
